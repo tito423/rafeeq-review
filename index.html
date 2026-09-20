@@ -57,6 +57,7 @@ mark { background:var(--gold); color:#111; }
 <script>
 const TABS = [
   ['intro', 'عن المراجعة'],
+  ['hadith', 'الكتب التسعة'],
   ['azkar', 'الأذكار'],
   ['quotes', 'المقولات'],
   ['texts', 'نصوص التطبيق'],
@@ -69,7 +70,17 @@ const store = (() => { try { return JSON.parse(localStorage.getItem('review') ||
 const save = () => { try { localStorage.setItem('review', JSON.stringify(store)); } catch {} };
 const norm = s => (s || '').replace(/[ً-ْٰـ]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
 const esc = s => (s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-let tab = location.hash.slice(1) || 'intro';
+// The hash carries the hadith position too: #hadith/bukhari/12. The corpus
+// is 36.2 million characters over 1,482 chapters, so the site never holds
+// more than the one chapter being read.
+let tab = 'intro', hbook = null, hch = null;
+function readHash() {
+  const parts = location.hash.slice(1).split('/');
+  tab = parts[0] || 'intro';
+  hbook = parts[1] || null;
+  hch = parts[2] || null;
+}
+readHash();
 
 async function load(name) {
   if (!cache[name]) cache[name] = await (await fetch('data/' + name + '.json')).json();
@@ -84,6 +95,21 @@ async function groups(t) {
     items: b.quotes.map((q, n) => ({ id: 'quote.' + b.id + '.' + n, text: q.t.ar, note: b.sourceLabel, meta: 'ص ' + q.p })) }));
   if (t === 'texts') return (await load('texts')).map(g => ({ title: g.title,
     items: g.items.map(i => ({ id: 'text.' + i.id, text: i.text, meta: i.id })) }));
+  if (t === 'hadith') {
+    if (!hbook || !hch) return [];
+    const idx = await load('hadith/index');
+    const b = idx.find(x => x.key === hbook); if (!b) return [];
+    const c = b.chapters.find(x => x.no === hch);
+    const items = await load('hadith/' + hbook + '/' + hch);
+    return [{ title: b.name + ' — ' + (c ? c.name : hch), items: items.map(h => ({
+      id: 'hadith.' + hbook + '.' + h.n,
+      text: h.t,
+      // A grading must name whose it is; the app's own rule. Where there is
+      // no named grader the site says so rather than showing a bare word.
+      note: h.g ? (h.g + ' — ' + h.r) : 'لا حكم مسمّى في المصدر',
+      meta: 'رقم ' + h.n,
+    })) }];
+  }
   if (t === 'sources') return [{ title: 'مصادر المحتوى كما يذكرها التطبيق', items: (await load('sources')).map(i => ({ id: 'src.' + i.id, text: i.text })) }];
   if (t === 'hajj') { const d = await load('hajj'); return Object.entries(d).flatMap(([track, steps]) =>
     steps.map(s => ({ title: (track === 'hajj' ? 'الحج' : 'العمرة') + ' — ' + s.key + ' (ص ' + s.pages + ')',
@@ -99,7 +125,22 @@ function intro() {
   <p><b>الغرض:</b> مراجعة كل نص ديني يعرضه تطبيق «رفيق الدرب»: الأذكار وتخريجها، والمقولات ومصادرها، ونصوص الواجهة (سنن السور، حديث اليوم، الصيام، الرقية، دليل المسلم الجديد، تراجم الأئمة…)، ومقاطع «الإيضاح» في المناسك، ودروس التجويد.</p>
   <p><b>النصوص منقولة آليًا</b> مما يحمله التطبيق نفسه، دون إعادة كتابة: قواعد البيانات المضمَّنة، والكتب مقطوعة بنفس كود التطبيق.</p>
   <p><b>طريقة المراجعة:</b> علّم «تمت» على ما راجعته، واكتب ملاحظتك تحت أي نص. تُحفظ على جهازك، وزر «نسخ ملاحظاتي» يجمعها في نص واحد ترسله.</p>
-  <p><b>قريبًا:</b> الكتب التسعة بأحكامها ومحققيها، ثم كتب المكتبة كاملة.</p></div>`;
+  <p><b>الكتب التسعة:</b> ٦٧٬١٥٣ حديثًا، منها ٤٥٬٢١٩ بحكم يذكر محققه بالاسم، و٢١٬٩٣٤ بلا حكم مسمّى — والصحيحان منها بلا تحكيم عن عمد. اختر الكتاب ثم الباب؛ لا يُحمَّل إلا الباب الذي تفتحه.</p>
+  <p><b>قريبًا:</b> كتب المكتبة كاملة.</p></div>`;
+}
+
+// Book list, then chapter list. Two taps before any hadith text is fetched.
+async function picker() {
+  const idx = await load('hadith/index');
+  if (!hbook) return '<p class="stat">الكتب التسعة — اختر كتابًا</p>' + idx.map(b =>
+    `<details open><summary><a href="#hadith/${b.key}">${esc(b.name)}</a>` +
+    `<span class="n">${b.count}</span></summary>` +
+    `<div class="item"><div class="meta">${esc(b.author)} · ${b.chapters.length} بابًا</div></div></details>`).join('');
+  const b = idx.find(x => x.key === hbook);
+  if (!b) return '<p class="stat">لا يوجد</p>';
+  return `<p class="stat"><a href="#hadith">→ الكتب التسعة</a> · ${esc(b.name)} — اختر بابًا</p>` +
+    b.chapters.map(c => `<details><summary><a href="#hadith/${b.key}/${c.no}">${esc(c.no + '. ' + c.name)}</a>` +
+      `<span class="n">${c.count}</span></summary></details>`).join('');
 }
 
 function hl(text, q) {
@@ -112,6 +153,7 @@ async function render() {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
   const main = document.getElementById('main');
   if (tab === 'intro') { main.innerHTML = intro(); return; }
+  if (tab === 'hadith' && !hch) { main.innerHTML = await picker(); return; }
   main.innerHTML = '<p class="stat">…جارٍ التحميل</p>';
   const q = norm(document.getElementById('q').value.trim());
   const gs = await groups(tab);
@@ -145,13 +187,22 @@ document.getElementById('export').onclick = async () => {
   for (const [t, name] of TABS.slice(1)) for (const g of await groups(t)) for (const i of g.items) {
     const r = store[i.id]; if (r && r.c) lines.push(`[${name} — ${g.title}]\n${i.text.slice(0, 160)}\n← ${r.c}\n`);
   }
+  // Only the open hadith chapter is in memory, so a note made in another
+  // chapter would be dropped silently. Everything still in storage goes out
+  // by its id, whether or not its text is loaded.
+  for (const [id, r] of Object.entries(store)) {
+    if (!r || !r.c) continue;
+    if (lines.some(x => x.includes(r.c))) continue;
+    lines.push('[' + id + ']\n\u2190 ' + r.c + '\n');
+  }
   const text = lines.length ? 'ملاحظات مراجعة رفيق الدرب\n\n' + lines.join('\n') : 'لا توجد ملاحظات بعد.';
   try { await navigator.clipboard.writeText(text); alert('نُسخت ' + lines.length + ' ملاحظة. الصقها في رسالة.'); }
   catch { prompt('انسخ النص:', text); }
 };
 let timer; document.getElementById('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(render, 250); });
 document.getElementById('tabs').innerHTML = TABS.map(([t, n]) => `<button data-t="${t}">${n}</button>`).join('');
-document.getElementById('tabs').onclick = e => { const t = e.target.dataset.t; if (!t) return; tab = t; location.hash = t; render(); };
+document.getElementById('tabs').onclick = e => { const t = e.target.dataset.t; if (!t) return; location.hash = t; };
+window.addEventListener('hashchange', () => { readHash(); render(); });
 render();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
